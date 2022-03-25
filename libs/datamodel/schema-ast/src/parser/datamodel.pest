@@ -94,7 +94,7 @@ doc_content = @{ (!NEWLINE ~ ANY)* }
 // ######################################
 // shared building blocks
 // ######################################
-maybe_empty_identifier = @{ ( "_" | "-" | ASCII_ALPHANUMERIC)* }
+maybe_empty_identifier = @{ ( "_" | "-" | "." | ASCII_ALPHANUMERIC)* }
 non_empty_identifier = @{ ASCII_ALPHANUMERIC ~ maybe_empty_identifier }
 
 WHITESPACE = @{ SPACE_SEPARATOR | "\t" } // tabs are also whitespace

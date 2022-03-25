@@ -128,6 +128,26 @@ impl ScalarFieldWalkerExt for ScalarFieldWalker<'_> {
     }
 }
 
+impl ScalarFieldWalkerExt for CompositeTypeFieldWalker<'_> {
+    fn native_type_instance(&self, connector: &dyn Connector) -> Option<NativeTypeInstance> {
+        self.raw_native_type().and_then(|(_, name, args, _)| {
+            connector
+                .parse_native_type(name, args.to_owned(), self.ast_field().span)
+                .ok()
+        })
+    }
+}
+
+impl ScalarFieldWalkerExt for IndexFieldWalker<'_> {
+    fn native_type_instance(&self, connector: &dyn Connector) -> Option<NativeTypeInstance> {
+        self.raw_native_type().and_then(|(_, name, args, _)| {
+            connector
+                .parse_native_type(name, args.to_owned(), self.ast_field().span)
+                .ok()
+        })
+    }
+}
+
 pub trait RelationFieldWalkerExt {
     fn default_on_delete_action(self, integrity: ReferentialIntegrity, connector: &dyn Connector) -> ReferentialAction;
 }

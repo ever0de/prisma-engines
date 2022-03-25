@@ -105,6 +105,11 @@ impl ScalarFieldType {
             _ => None,
         }
     }
+
+    /// Is the type of the field `Unsupported("...")`?
+    pub fn is_unsupported(self) -> bool {
+        matches!(self, Self::Unsupported(_))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -242,7 +247,12 @@ impl IndexAttribute {
     }
 
     pub(crate) fn fields_match(&self, other: &[ast::FieldId]) -> bool {
-        self.fields.len() == other.len() && self.fields.iter().zip(other.iter()).all(|(a, b)| a.field_id == *b)
+        self.fields.len() == other.len()
+            && self
+                .fields
+                .iter()
+                .zip(other.iter())
+                .all(|(a, b)| a.field_location.field_id() == *b)
     }
 }
 
@@ -257,13 +267,42 @@ pub(crate) struct IdAttribute {
 
 impl IdAttribute {
     pub(crate) fn fields_match(&self, other: &[ast::FieldId]) -> bool {
-        self.fields.len() == other.len() && self.fields.iter().zip(other.iter()).all(|(a, b)| a.field_id == *b)
+        self.fields.len() == other.len()
+            && self
+                .fields
+                .iter()
+                .zip(other.iter())
+                .all(|(a, b)| a.field_location.field_id() == *b)
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IndexFieldLocation {
+    /// The field is in the same model with the index.
+    InModel(ast::FieldId),
+    /// The field is in a embedded type, reflected as a composite type in Prisma.
+    InCompositeType(ast::CompositeTypeId, ast::FieldId),
+}
+
+impl IndexFieldLocation {
+    pub fn as_in_model(self) -> Option<ast::FieldId> {
+        match self {
+            IndexFieldLocation::InModel(field_id) => Some(field_id),
+            IndexFieldLocation::InCompositeType(_, _) => None,
+        }
+    }
+
+    pub fn field_id(self) -> ast::FieldId {
+        match self {
+            IndexFieldLocation::InModel(field_id) => field_id,
+            IndexFieldLocation::InCompositeType(_, field_id) => field_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct FieldWithArgs {
-    pub(crate) field_id: ast::FieldId,
+    pub(crate) field_location: IndexFieldLocation,
     pub(crate) sort_order: Option<SortOrder>,
     pub(crate) length: Option<u32>,
 }

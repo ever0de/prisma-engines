@@ -1,9 +1,11 @@
+use std::borrow::Cow;
+
 use super::FieldResolutionError;
 use crate::{
     ast::{self, WithName},
     attributes::resolve_field_array_with_args,
     context::Context,
-    types::{FieldWithArgs, IdAttribute, ModelAttributes, SortOrder},
+    types::{FieldWithArgs, IdAttribute, IndexFieldLocation, ModelAttributes, SortOrder},
     DatamodelError, StringId,
 };
 
@@ -21,20 +23,43 @@ pub(super) fn model(model_data: &mut ModelAttributes, model_id: ast::ModelId, ct
         Err(FieldResolutionError::ProblematicFields {
             unknown_fields: unresolvable_fields,
             relation_fields,
+            non_composite_fields_in_wrong_position: _,
         }) => {
             if !unresolvable_fields.is_empty() {
-                ctx.push_error(DatamodelError::new_model_validation_error(
-                    &format!(
-                        "The multi field id declaration refers to the unknown fields {}.",
-                        unresolvable_fields.join(", "),
-                    ),
-                    ctx.ast[model_id].name(),
-                    fields.span(),
-                ));
+                let fields_str = unresolvable_fields
+                    .into_iter()
+                    .map(|(top_id, field_name)| match top_id {
+                        ast::TopId::CompositeType(ctid) => {
+                            let ct_name = &ctx.ast[ctid].name.name;
+
+                            Cow::from(format!("{field_name} in type {ct_name}"))
+                        }
+                        ast::TopId::Model(_) => Cow::from(field_name),
+                        _ => unreachable!(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let msg = format!("The multi field id declaration refers to the unknown fields {fields_str}.");
+                let error = DatamodelError::new_model_validation_error(&msg, ctx.ast[model_id].name(), fields.span());
+
+                ctx.push_error(error);
             }
 
             if !relation_fields.is_empty() {
-                ctx.push_error(DatamodelError::new_model_validation_error(&format!("The id definition refers to the relation fields {}. ID definitions must reference only scalar fields.", relation_fields.iter().map(|(f, _)| f.name()).collect::<Vec<_>>().join(", ")), ctx.ast[model_id].name(), attr.span));
+                let field_names = relation_fields
+                    .iter()
+                    .map(|(f, _)| f.name())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let msg = format!("The id definition refers to the relation fields {field_names}. ID definitions must reference only scalar fields.");
+
+                ctx.push_error(DatamodelError::new_model_validation_error(
+                    &msg,
+                    ctx.ast[model_id].name(),
+                    attr.span,
+                ));
             }
 
             return;
@@ -46,9 +71,26 @@ pub(super) fn model(model_data: &mut ModelAttributes, model_id: ast::ModelId, ct
     // ID attribute fields must reference only required fields.
     let fields_that_are_not_required: Vec<&str> = resolved_fields
         .iter()
-        .map(|field| &ctx.ast[model_id][field.field_id])
-        .filter(|field| !field.arity.is_required())
-        .map(|field| field.name())
+        .filter_map(|field| match field.field_location {
+            IndexFieldLocation::InModel(field_id) => {
+                let field = &ctx.ast[model_id][field_id];
+
+                if field.arity.is_required() {
+                    None
+                } else {
+                    Some(field.name())
+                }
+            }
+            IndexFieldLocation::InCompositeType(ctid, field_id) => {
+                let field = &ctx.ast[ctid][field_id];
+
+                if field.arity.is_required() {
+                    None
+                } else {
+                    Some(field.name())
+                }
+            }
+        })
         .collect();
 
     if !fields_that_are_not_required.is_empty() {
@@ -89,6 +131,7 @@ pub(super) fn model(model_data: &mut ModelAttributes, model_id: ast::ModelId, ct
         source_field: None,
     });
 }
+
 pub(super) fn field<'db>(
     ast_model: &'db ast::Model,
     field_id: ast::FieldId,
@@ -135,7 +178,7 @@ pub(super) fn field<'db>(
                 mapped_name,
                 source_attribute: ctx.current_attribute_id(),
                 fields: vec![FieldWithArgs {
-                    field_id,
+                    field_location: IndexFieldLocation::InModel(field_id),
                     sort_order,
                     length,
                 }],

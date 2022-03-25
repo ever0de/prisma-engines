@@ -133,11 +133,11 @@ impl<'db> ScalarFieldWalker<'db> {
 
     /// The `@default()` attribute of the field, if any.
     pub fn default_value(self) -> Option<DefaultValueWalker<'db>> {
-        self.attributes().default.as_ref().map(|d| DefaultValueWalker {
+        self.attributes().default.as_ref().map(|default| DefaultValueWalker {
             model_id: self.model_id,
             field_id: self.field_id,
             db: self.db,
-            default: d,
+            default,
         })
     }
 
@@ -288,11 +288,12 @@ impl<'db> ScalarFieldAttributeWalker<'db> {
     ///
     /// ```
     pub fn as_scalar_field(self) -> ScalarFieldWalker<'db> {
+        let field_id = self.args().field_location.field_id();
         ScalarFieldWalker {
             model_id: self.model_id,
-            field_id: self.args().field_id,
+            field_id,
             db: self.db,
-            scalar_field: &self.db.types.scalar_fields[&(self.model_id, self.args().field_id)],
+            scalar_field: &self.db.types.scalar_fields[&(self.model_id, field_id)],
         }
     }
 
