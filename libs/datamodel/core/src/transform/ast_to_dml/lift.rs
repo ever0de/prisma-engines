@@ -3,7 +3,10 @@ use crate::{
     dml::{self, IndexField, PrimaryKeyField},
     transform::ast_to_dml::db::{self, walkers::*, IndexAlgorithm},
 };
-use ::dml::composite_type::{CompositeType, CompositeTypeField, CompositeTypeFieldType};
+use ::dml::{
+    composite_type::{CompositeType, CompositeTypeField, CompositeTypeFieldType},
+    model::IndexFieldLocation,
+};
 use datamodel_connector::{walker_ext_traits::*, Connector, ReferentialIntegrity, ScalarType};
 use std::collections::HashMap;
 
@@ -339,15 +342,15 @@ impl<'a> LiftAstToDml<'a> {
             fields: pk
                 .scalar_field_attributes()
                 .map(|field|
-                    //TODO (extended indexes) here it is ok to pass sort and length with out a preview flag
-                    // check since this is coming from the ast and the parsing would reject the args without
-                    // the flag set
-                    // When we start using the extra args here could be a place to fill in the defaults.
-                    PrimaryKeyField {
-                    name: field.as_scalar_field().name().to_owned(),
-                    sort_order: field.sort_order().map(parser_database_sort_order_to_dml_sort_order),
-                    length: field.length(),
-                })
+                     //TODO (extended indexes) here it is ok to pass sort and length with out a preview flag
+                     // check since this is coming from the ast and the parsing would reject the args without
+                     // the flag set
+                     // When we start using the extra args here could be a place to fill in the defaults.
+                     PrimaryKeyField {
+                         name: field.as_index_field().as_scalar_field().unwrap().name().to_owned(),
+                         sort_order: field.sort_order().map(parser_database_sort_order_to_dml_sort_order),
+                         length: field.length(),
+                     })
                 .collect(),
             defined_on_field: pk.is_defined_on_field(),
         });
@@ -357,10 +360,28 @@ impl<'a> LiftAstToDml<'a> {
             .map(|idx| {
                 let fields = idx
                     .scalar_field_attributes()
-                    .map(|field| IndexField {
-                        name: field.as_scalar_field().name().to_owned(),
-                        sort_order: field.sort_order().map(parser_database_sort_order_to_dml_sort_order),
-                        length: field.length(),
+                    .map(|field| {
+                        let index_field = field.as_index_field();
+
+                        let location = if index_field.is_scalar_field() {
+                            IndexFieldLocation::InCurrentModel {
+                                field_name: index_field.name().to_owned(),
+                            }
+                        } else {
+                            let cf = index_field.as_composite_field().unwrap();
+
+                            IndexFieldLocation::InCompositeType {
+                                composite_type_name: cf.composite_type().name().to_owned(),
+                                field_name: cf.name().to_owned(),
+                                full_path: todo!("we need the full path here"),
+                            }
+                        };
+
+                        IndexField {
+                            location,
+                            sort_order: field.sort_order().map(parser_database_sort_order_to_dml_sort_order),
+                            length: field.length(),
+                        }
                     })
                     .collect();
 

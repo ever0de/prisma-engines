@@ -4,6 +4,7 @@ use crate::{
     dml::{self, IndexField, PrimaryKeyField, SortOrder},
     Datasource,
 };
+use ::dml::model::IndexFieldLocation;
 use enumflags2::BitFlags;
 
 pub struct LowerDmlToAst<'a> {
@@ -200,11 +201,16 @@ impl<'a> LowerDmlToAst<'a> {
                     args.extend(ordering);
                 }
 
+                let name = match &f.location {
+                    IndexFieldLocation::InCurrentModel { field_name } => field_name.clone(),
+                    IndexFieldLocation::InCompositeType { full_path, .. } => full_path.clone(),
+                };
+
                 if args.is_empty() {
-                    ast::Expression::ConstantValue(f.name.clone(), ast::Span::empty())
+                    ast::Expression::ConstantValue(name, ast::Span::empty())
                 } else {
                     ast::Expression::Function(
-                        f.name.clone(),
+                        name,
                         ast::ArgumentsList {
                             arguments: args,
                             ..Default::default()

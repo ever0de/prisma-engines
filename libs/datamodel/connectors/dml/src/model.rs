@@ -2,7 +2,6 @@ use crate::default_value::DefaultKind;
 use crate::field::{Field, FieldType, RelationField, ScalarField};
 use crate::scalars::ScalarType;
 use crate::traits::{Ignorable, WithDatabaseName, WithName};
-use indoc::formatdoc;
 use std::fmt;
 
 /// Represents a model in a prisma schema.
@@ -61,19 +60,35 @@ impl IndexDefinition {
     }
 }
 
+/// The field can either be directly in the same model, or in a composite type
+/// embedded in the current model.
+#[derive(Debug, PartialEq, Clone)]
+pub enum IndexFieldLocation {
+    InCurrentModel {
+        field_name: String,
+    },
+    InCompositeType {
+        composite_type_name: String,
+        field_name: String,
+        full_path: String,
+    },
+}
+
 ///A field in an index that optionally defines a sort order and length limit.
 #[derive(Debug, PartialEq, Clone)]
 pub struct IndexField {
-    pub name: String,
+    pub location: IndexFieldLocation,
     pub sort_order: Option<SortOrder>,
     pub length: Option<u32>,
 }
 
 impl IndexField {
     /// Tests only
-    pub fn new(name: &str) -> Self {
+    pub fn new_in_model(name: &str) -> Self {
         IndexField {
-            name: name.to_string(),
+            location: IndexFieldLocation::InCurrentModel {
+                field_name: name.into(),
+            },
             sort_order: None,
             length: None,
         }
@@ -274,111 +289,8 @@ impl Model {
         ))
     }
 
-    /// This should match the logic in `prisma_models::Model::primary_identifier`.
-    pub fn first_unique_criterion(&self) -> Vec<&ScalarField> {
-        match self.strict_unique_criterias().first() {
-            Some(criteria) => criteria.fields.clone(),
-            None => panic!("Could not find the first unique criteria on model {}", self.name()),
-        }
-    }
-
-    /// optional unique fields are NOT considered a unique criteria
-    /// used for: A Model must have at least one STRICT unique criteria.
-    pub fn strict_unique_criterias(&self) -> Vec<UniqueCriteria> {
-        self.unique_criterias(false, false)
-    }
-
-    /// optional unique fields are NOT considered a unique criteria
-    /// used for: A Model must have at least one STRICT unique criteria.
-    /// Ignores unsupported, used for introspection to decide when to ignore
-    pub fn strict_unique_criterias_disregarding_unsupported(&self) -> Vec<UniqueCriteria> {
-        self.unique_criterias(false, true)
-    }
-
-    /// optional unique fields are considered a unique criteria
-    /// used for: A relation must reference one LOOSE unique criteria. (optional fields are okay in this case)
-    pub fn loose_unique_criterias(&self) -> Vec<UniqueCriteria> {
-        self.unique_criterias(true, false)
-    }
-
-    /// returns the order of unique criterias ordered based on their precedence
-    fn unique_criterias(&self, allow_optional: bool, disregard_unsupported: bool) -> Vec<UniqueCriteria> {
-        let mut result = Vec::new();
-
-        let in_eligible = |field: &ScalarField| {
-            if disregard_unsupported {
-                field.is_commented_out || matches!(field.field_type, FieldType::Unsupported(_))
-            } else {
-                field.is_commented_out
-            }
-        };
-
-        // first candidate: primary key
-        {
-            if let Some(pk) = &self.primary_key {
-                let id_fields: Vec<_> = pk
-                    .fields
-                    .iter()
-                    .map(|f| match self.find_scalar_field(&f.name) {
-                        Some(field) => field,
-                        None => {
-                            let error = formatdoc!(
-                                r#"
-                                Hi there! We've been seeing this error in our error reporting backend,
-                                but cannot reproduce it in our own tests. The problem is that we have a
-                                primary key in the model `{}` that uses the column `{}` which we for
-                                some reason don't have in our internal representation. If you see this,
-                                could you please file an issue to https://github.com/prisma/prisma so we
-                                can discuss about fixing this. -- Your friendly prisma developers.
-                            "#,
-                                self.name,
-                                f
-                            );
-
-                            panic!("{}", error.replace('\n', " "));
-                        }
-                    })
-                    .collect();
-
-                if !id_fields.is_empty()
-                    && !id_fields
-                        .iter()
-                        .any(|f| in_eligible(f) || (f.is_optional() && !allow_optional))
-                {
-                    result.push(UniqueCriteria::new(id_fields));
-                }
-            }
-        }
-
-        // second candidate: any unique constraint where all fields are required
-        {
-            let mut unique_field_combi: Vec<UniqueCriteria> = self
-                .indices
-                .iter()
-                .filter(|id| id.is_unique())
-                .filter_map(|id| {
-                    let fields: Vec<_> = id
-                        .fields
-                        .iter()
-                        .map(|f| self.find_scalar_field(&f.name).unwrap())
-                        .collect();
-                    let no_fields_are_ineligible = !fields.iter().any(|f| in_eligible(f));
-                    let all_fields_are_required = fields.iter().all(|f| f.is_required());
-                    ((all_fields_are_required || allow_optional) && no_fields_are_ineligible)
-                        .then(|| UniqueCriteria::new(fields))
-                })
-                .collect();
-
-            unique_field_combi.sort_by_key(|c| c.fields.len());
-
-            result.extend(unique_field_combi)
-        }
-
-        result
-    }
-
-    pub fn field_is_indexed(&self, field_name: &str) -> bool {
-        let field = self.find_field(field_name).unwrap();
+    pub fn field_is_indexed(&self, name: &str) -> bool {
+        let field = self.find_field(name).unwrap();
 
         if self.field_is_primary(field.name()) || self.field_is_unique(field.name()) {
             return true;
@@ -387,9 +299,12 @@ impl Model {
         let is_first_in_index = self
             .indices
             .iter()
-            .any(|index| index.fields.first().unwrap().name == field_name);
+            .any(|index| match &index.fields.first().unwrap().location {
+                IndexFieldLocation::InCurrentModel { field_name } => field_name == name,
+                IndexFieldLocation::InCompositeType { .. } => false,
+            });
 
-        let is_first_in_primary_key = matches!(&self.primary_key, Some(PrimaryKeyDefinition{ fields, ..}) if fields.first().unwrap().name == field_name);
+        let is_first_in_primary_key = matches!(&self.primary_key, Some(PrimaryKeyDefinition{ fields, ..}) if fields.first().unwrap().name == name);
 
         is_first_in_index || is_first_in_primary_key
     }
@@ -419,14 +334,24 @@ impl Model {
     }
 
     pub fn field_is_unique(&self, name: &str) -> bool {
-        self.indices
-            .iter()
-            .any(|i| i.is_unique() && i.fields.len() == 1 && i.fields.first().unwrap().name == name)
+        self.indices.iter().any(|i| {
+            let names_match = match &i.fields.first().unwrap().location {
+                IndexFieldLocation::InCurrentModel { field_name } => field_name == name,
+                IndexFieldLocation::InCompositeType { .. } => false,
+            };
+
+            i.is_unique() && i.fields.len() == 1 && names_match
+        })
     }
 
     pub fn field_is_unique_and_defined_on_field(&self, name: &str) -> bool {
         self.indices.iter().any(|i| {
-            i.is_unique() && i.fields.len() == 1 && i.fields.first().unwrap().name == name && i.defined_on_field
+            let names_match = match &i.fields.first().unwrap().location {
+                IndexFieldLocation::InCurrentModel { field_name } => field_name == name,
+                IndexFieldLocation::InCompositeType { .. } => false,
+            };
+
+            i.is_unique() && i.fields.len() == 1 && names_match && i.defined_on_field
         })
     }
 

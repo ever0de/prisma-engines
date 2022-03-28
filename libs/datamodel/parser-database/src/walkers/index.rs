@@ -129,7 +129,7 @@ impl<'db> IndexWalker<'db> {
         }
 
         self.scalar_field_attributes().zip(fields).all(|(a, b)| {
-            let same_name = a.as_scalar_field().name() == b.as_scalar_field().name();
+            let same_name = a.as_index_field().field_id() == b.as_index_field().field_id();
             let same_attributes = a.sort_order() == b.sort_order() && a.length() == b.length();
 
             same_name && same_attributes
@@ -250,6 +250,25 @@ impl<'db> IndexFieldWalker<'db> {
             InnerIndexFieldWalker::Scalar(sf) => Some(sf),
             InnerIndexFieldWalker::Composite(_) => None,
         }
+    }
+
+    /// Convert the walker to a composite field, if the underlying field is in a
+    /// composite type.
+    pub fn as_composite_field(self) -> Option<CompositeTypeFieldWalker<'db>> {
+        match self.inner {
+            InnerIndexFieldWalker::Scalar(_) => None,
+            InnerIndexFieldWalker::Composite(cf) => Some(cf),
+        }
+    }
+
+    /// True if the index field is a scalar field.
+    pub fn is_scalar_field(self) -> bool {
+        matches!(self.inner, InnerIndexFieldWalker::Scalar(_))
+    }
+
+    /// True if the index field is a composite field.
+    pub fn is_composite_field(self) -> bool {
+        matches!(self.inner, InnerIndexFieldWalker::Composite(_))
     }
 
     /// Does the field define a primary key by its own.

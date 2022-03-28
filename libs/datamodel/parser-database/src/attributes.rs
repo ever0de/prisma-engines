@@ -618,7 +618,7 @@ fn common_index_validations(index_data: &mut IndexAttribute, model_id: ast::Mode
 
                 ctx.push_error({
                     let message: &str = &format!(
-                        "The {}index definition refers to the unknown fields {}.",
+                        "The {}index definition refers to the unknown fields: {}.",
                         if index_data.is_unique() { "unique " } else { "" },
                         fields.join(", "),
                     );

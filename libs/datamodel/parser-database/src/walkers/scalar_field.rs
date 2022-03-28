@@ -1,10 +1,12 @@
 use crate::{
     ast,
-    types::{DefaultAttribute, FieldWithArgs, ScalarField, ScalarType, SortOrder},
+    types::{DefaultAttribute, FieldWithArgs, IndexFieldLocation, ScalarField, ScalarType, SortOrder},
     walkers::{EnumWalker, ModelWalker, Walker},
     ParserDatabase, ScalarFieldType,
 };
 use diagnostics::Span;
+
+use super::{CompositeTypeFieldWalker, IndexFieldWalker};
 
 /// A scalar field, as part of a model.
 #[derive(Debug, Copy, Clone)]
@@ -274,9 +276,20 @@ impl<'db> ScalarFieldAttributeWalker<'db> {
         self.args().length
     }
 
-    /// The underlying scalar field.
+    fn as_scalar_field(self) -> ScalarFieldWalker<'db> {
+        let field_id = self.args().field_location.field_id();
+        ScalarFieldWalker {
+            model_id: self.model_id,
+            field_id,
+            db: self.db,
+            scalar_field: &self.db.types.scalar_fields[&(self.model_id, field_id)],
+        }
+    }
+
+    /// The underlying field.
     ///
     /// ```ignore
+    /// // either this
     /// model Test {
     ///   id          Int @id
     ///   name        String
@@ -286,14 +299,27 @@ impl<'db> ScalarFieldAttributeWalker<'db> {
     ///   @@index([name])
     /// }
     ///
+    /// // or this
+    /// type A {
+    ///   field String
+    /// }
+    ///
+    /// model Test {
+    ///   id Int @id
+    ///   a  A
+    ///
+    ///   @@index([a.field])
+    /// }
     /// ```
-    pub fn as_scalar_field(self) -> ScalarFieldWalker<'db> {
-        let field_id = self.args().field_location.field_id();
-        ScalarFieldWalker {
-            model_id: self.model_id,
-            field_id,
-            db: self.db,
-            scalar_field: &self.db.types.scalar_fields[&(self.model_id, field_id)],
+    pub fn as_index_field(self) -> IndexFieldWalker<'db> {
+        match self.args().field_location {
+            IndexFieldLocation::InModel(_) => IndexFieldWalker::new(self.as_scalar_field()),
+            IndexFieldLocation::InCompositeType(ctid, field_id) => IndexFieldWalker::new(CompositeTypeFieldWalker {
+                ctid,
+                field_id,
+                field: &self.db.types.composite_type_fields[&(ctid, field_id)],
+                db: self.db,
+            }),
         }
     }
 

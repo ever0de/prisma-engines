@@ -115,8 +115,18 @@ impl<'a> LowerDmlToAst<'a> {
                 ast::Span::empty(),
             ))]
         } else {
+            let fields = index_def
+                .fields
+                .clone()
+                .into_iter()
+                .map(|f| match f.location {
+                    ::dml::model::IndexFieldLocation::InCurrentModel { field_name } => field_name,
+                    ::dml::model::IndexFieldLocation::InCompositeType { full_path, .. } => full_path,
+                })
+                .collect::<Vec<_>>();
+
             vec![ast::Argument::new_unnamed(ast::Expression::Array(
-                LowerDmlToAst::field_array(&index_def.fields.clone().into_iter().map(|f| f.name).collect::<Vec<_>>()),
+                LowerDmlToAst::field_array(&fields),
                 ast::Span::empty(),
             ))]
         }

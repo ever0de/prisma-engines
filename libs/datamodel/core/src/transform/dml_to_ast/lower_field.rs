@@ -5,7 +5,7 @@ use crate::{
     transform::dml_to_ast::LowerDmlToAst,
     Datasource,
 };
-use ::dml::{prisma_value, traits::WithName, PrismaValue};
+use ::dml::{model::IndexFieldLocation, prisma_value, traits::WithName, PrismaValue};
 use datamodel_connector::{Connector, EmptyDatamodelConnector};
 
 impl<'a> LowerDmlToAst<'a> {
@@ -121,10 +121,16 @@ impl<'a> LowerDmlToAst<'a> {
             if model.field_is_unique_and_defined_on_field(&sf.name) {
                 let mut arguments = Vec::new();
                 if let Some(idx) = model.indices.iter().find(|i| {
-                    i.is_unique()
-                        && i.defined_on_field
-                        && i.fields.len() == 1
-                        && i.fields.first().unwrap().name == field.name()
+                    let names_match = match &i.fields.first().unwrap().location {
+                        IndexFieldLocation::InCurrentModel { field_name } => field.name() == field_name,
+                        IndexFieldLocation::InCompositeType {
+                            composite_type_name,
+                            field_name,
+                            full_path,
+                        } => false,
+                    };
+
+                    i.is_unique() && i.defined_on_field && i.fields.len() == 1 && names_match
                 }) {
                     self.push_field_index_arguments(model, idx, &mut arguments)
                 }
